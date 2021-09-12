@@ -1,7 +1,7 @@
 import os
 import shutil
 import pytest
-import tablemap as sp 
+import tablemap as tm 
 
 # much more work to do
 
@@ -14,18 +14,18 @@ def run_around_tests():
         for fname in files:
             if os.path.isfile(fname):
                 os.remove(fname)
-        sp.tablemap._JOBS = {}
-        shutil.rmtree(sp.tablemap._TEMP, ignore_errors=True)
+        tm.tablemap._JOBS = {}
+        shutil.rmtree(tm.tablemap._TEMP, ignore_errors=True)
     remfiles()
     yield
     remfiles()
 
 
 def test_loading_ordinary_csv():
-    sp.register(orders=sp.load('tests/Orders.csv'))
-    sp.run()
-    orders1 = sp.get('orders')
-    orders2 = sp.util.readxl('tests/Orders.csv')
+    tm.register(orders=tm.load('tests/Orders.csv'))
+    tm.run()
+    orders1 = tm.get('orders')
+    orders2 = tm.util.readxl('tests/Orders.csv')
     header = next(orders2)
     assert list(orders1[0].keys()) == header 
 
@@ -38,13 +38,13 @@ def test_apply_order_year():
         r['order_year'] = r['order_date'][:4]
         return r
 
-    sp.register(
-        orders=sp.load('tests/Orders.csv'),
-        orders1=sp.apply(year, 'orders')
+    tm.register(
+        orders=tm.load('tests/Orders.csv'),
+        orders1=tm.apply(year, 'orders')
     )
 
-    sp.run()
-    for r in sp.get('orders1'):
+    tm.run()
+    for r in tm.get('orders1'):
         assert r['order_year'] == int(r['order_date'][:4])
 
 
@@ -54,27 +54,27 @@ def test_apply_group1():
         r0['n'] = len(rs)
         return r0
 
-    sp.register(
-        order_items=sp.load('tests/OrderItems.csv'),
-        order_items1=sp.apply(size, 'order_items', by='prod_id'),
-        order_items2=sp.apply(size, 'order_items', by='prod_id, order_item'),
+    tm.register(
+        order_items=tm.load('tests/OrderItems.csv'),
+        order_items1=tm.apply(size, 'order_items', by='prod_id'),
+        order_items2=tm.apply(size, 'order_items', by='prod_id, order_item'),
     )
-    sp.run()
-    assert len(sp.get('order_items1')) == 7
-    assert len(sp.get('order_items2')) == 16 
+    tm.run()
+    assert len(tm.get('order_items1')) == 7
+    assert len(tm.get('order_items2')) == 16 
 
 
 def test_join():
-    sp.register(
-        products = sp.load('tests/Products.csv'),
-        vendors = sp.load('tests/Vendors.csv'),
-        products1 = sp.join(
+    tm.register(
+        products = tm.load('tests/Products.csv'),
+        vendors = tm.load('tests/Vendors.csv'),
+        products1 = tm.join(
             ['products', '*', 'vend_id'],
             ['vendors', 'vend_name, vend_country', 'vend_id'],
         )
     )
-    sp.run()
-    products1 = sp.get('products1')
+    tm.run()
+    products1 = tm.get('products1')
     assert products1[0]['vend_country'] == 'USA'
     assert products1[-1]['vend_country'] == 'England'
 
@@ -84,14 +84,14 @@ def test_parallel1():
         r['rev'] = r['quantity'] * r['item_price']
         return r
 
-    sp.register(
-        items = sp.load('tests/OrderItems.csv'),
-        items1 = sp.apply(revenue, 'items'),
-        items2 = sp.apply(revenue, 'items', parallel=True),
+    tm.register(
+        items = tm.load('tests/OrderItems.csv'),
+        items1 = tm.apply(revenue, 'items'),
+        items2 = tm.apply(revenue, 'items', parallel=True),
 
     )
-    sp.run()
-    assert sp.get('items1') == sp.get('items2')
+    tm.run()
+    assert tm.get('items1') == tm.get('items2')
 
 
 def test_parallel2():
@@ -100,12 +100,12 @@ def test_parallel2():
         r0['n'] = len(rs)
         return r0
 
-    sp.register(
-        items = sp.load('tests/OrderItems.csv'),
-        items1 = sp.apply(size, 'items', by='prod_id'),
-        items2 = sp.apply(size, 'items', by='prod_id', parallel=True),
+    tm.register(
+        items = tm.load('tests/OrderItems.csv'),
+        items1 = tm.apply(size, 'items', by='prod_id'),
+        items2 = tm.apply(size, 'items', by='prod_id', parallel=True),
 
     )
-    sp.run()
-    assert sp.get('items1') == sp.get('items2')
+    tm.run()
+    assert tm.get('items1') == tm.get('items2')
 

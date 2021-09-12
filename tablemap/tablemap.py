@@ -590,9 +590,9 @@ def register(**kwargs):
 
         import mapon as mo
 
-        sp.register(
-            table_name = sp.load('sample.csv'),
-            table_name1 = sp.apply(simple_process, 'table_name'),
+        tm.register(
+            table_name = tm.load('sample.csv'),
+            table_name1 = tm.apply(simple_process, 'table_name'),
         )
 
         mo.run()
