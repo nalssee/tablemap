@@ -9,6 +9,9 @@ _CONFIG = {
     'msg': True,
     'refresh': None,
     'export': None,
+    'create_function': None,
+    'create_aggregate': None,
+    'create_collation': None,
 }
 
 _WS = [os.getcwd()]

@@ -4,6 +4,7 @@ import csv
 import locale
 import os
 import random
+from re import I
 import signal
 import sqlite3
 import string
@@ -342,6 +343,23 @@ def _execute(c, job):
         else:
             _execute_parallel_apply(c, job)
 
+    elif cmd == 'select':
+        base_stmt = f"""
+        create table {job['output']} as 
+        select {' , '.join(job['cols'])} 
+        from {job['inputs'][0]} 
+        """
+        if job['where']:
+            base_stmt += f" where {job['where']}"
+        if job['group_by']:
+            base_stmt += f" group by {' , '.join(job['group_by'])}"
+        if job['having']:
+            base_stmt += f" having {job['having']}"
+        if job['order_by']:
+            base_stmt += f" order by {' , '.join(job['order_by'])}"
+
+        c._cursor.execute(base_stmt)
+
     # The only place where 'insert' is not used
     elif cmd == 'join':
         c.join(job['args'], job['output'])
@@ -553,6 +571,19 @@ def apply(fn=None, data=None, by=None, parallel=False):
     }
 
 
+def select(cols, data=None, where=None, group_by=None,
+           having=None, order_by=None):
+    return {
+        'cmd': 'select',
+        'cols': listify(cols),
+        'inputs': [data],
+        'where': where,
+        'group_by': listify(group_by) if group_by else None,
+        'having': having,
+        'order_by': listify(order_by) if order_by else None,
+    }
+
+
 def join(*args):
     """Forms join instruction."""
     inputs = [arg[0] for arg in args]
@@ -588,14 +619,14 @@ def register(**kwargs):
     .. highlight:: python
     .. code-block:: python
 
-        import mapon as mo
+        import tablemap as tm 
 
         tm.register(
             table_name = tm.load('sample.csv'),
             table_name1 = tm.apply(simple_process, 'table_name'),
         )
 
-        mo.run()
+        tm.run()
     """
     for k, _ in kwargs.items():
         if _JOBS.get(k, False):
@@ -726,6 +757,18 @@ def _run():
         # delete tables in 'refresh'
         if _CONFIG['refresh']:
             c.drop(listify(_CONFIG['refresh']))
+
+        if _CONFIG['create_function']:
+            for k, v in _CONFIG['create_function'].items():
+                c._conn.create_function(k, *v)
+
+        if _CONFIG['create_aggregate']:
+            for k, v in _CONFIG['create_aggregate'].items():
+                c._conn.create_aggregate(k, *v)
+
+        if _CONFIG['create_collation']:
+            for k, v in _CONFIG['create_collation'].items():
+                c._conn.create_collation(k, *v)
 
         starting_points = [job['output']
                            for job in jobs if job['cmd'] == 'load']
