@@ -3,8 +3,9 @@
 import csv
 import locale
 import os
+import sys
 import random
-from re import I
+# from re import I
 import signal
 import sqlite3
 import string
@@ -70,6 +71,85 @@ def _delayed_keyboard_interrupts():
             old_handler(*signal_received)
 
 
+class Inst:
+    def __init__(self, dbfile=None):
+        self.db = os.path.join(os.getcwd(), dbfile) 
+        self.tables = {}
+
+    def __setitem__(self, key, value):
+        cmd = value[0]
+        if cmd == "apply":
+            _, fn, *rest = value
+
+            self.tables[key] = {
+                'cmd': cmd,
+                'fn': value[1],
+                'inputs': [value[2]]
+
+
+            } 
+        elif cmd == "":
+            pass
+
+
+        self.tables[key] = value
+
+    def run(self):
+        pass
+
+def apply(fn=None, data=None, by=None, parallel=False):
+    """Forms apply instruction."""
+    return {
+        'cmd': 'apply',
+        'fn': fn,
+        'inputs': [data],
+        'by': listify(by) if by else None,
+        'parallel': parallel,
+    }
+
+def load(file=None, fn=None, delimiter=None, quotechar='"', encoding='utf-8'):
+    """Forms load instruction."""
+    return {'cmd': 'load',
+            'file': file,
+            'fn': fn,
+            'delimiter': delimiter,
+            'quotechar': quotechar,
+            'encoding': encoding,
+            'inputs': [],
+            }
+
+
+
+def join(*args):
+    """Forms join instruction."""
+    inputs = [arg[0] for arg in args]
+    return {
+        'cmd': 'join',
+        'inputs': inputs,
+        'args': args,
+    }
+
+
+def mzip(fn, data=None, stop_short=False):
+    """Forms mzip instruction."""
+    return {
+        'cmd': 'mzip',
+        'fn': fn,
+        'inputs': [table for table, _ in data],
+        'data': data,
+        'stop_short': stop_short,
+    }
+
+
+def concat(inputs):
+    """Forms concat instruction."""
+    return {
+        'cmd': 'concat',
+        'inputs': listify(inputs)
+    }
+
+
+    
 class _Connection:
     def __init__(self, dbfile):
         dbfile = os.path.join(_WS[0], dbfile)
@@ -547,70 +627,6 @@ def _execute_parallel_apply(c, job):
         finally:
             _delete_dbfiles(dbfiles)
 
-
-def load(file=None, fn=None, delimiter=None, quotechar='"', encoding='utf-8'):
-    """Forms load instruction."""
-    return {'cmd': 'load',
-            'file': file,
-            'fn': fn,
-            'delimiter': delimiter,
-            'quotechar': quotechar,
-            'encoding': encoding,
-            'inputs': [],
-            }
-
-
-def apply(fn=None, data=None, by=None, parallel=False):
-    """Forms apply instruction."""
-    return {
-        'cmd': 'apply',
-        'fn': fn,
-        'inputs': [data],
-        'by': listify(by) if by else None,
-        'parallel': parallel,
-    }
-
-
-def select(cols, data=None, where=None, group_by=None,
-           having=None, order_by=None):
-    return {
-        'cmd': 'select',
-        'cols': listify(cols),
-        'inputs': [data],
-        'where': where,
-        'group_by': listify(group_by) if group_by else None,
-        'having': having,
-        'order_by': listify(order_by) if order_by else None,
-    }
-
-
-def join(*args):
-    """Forms join instruction."""
-    inputs = [arg[0] for arg in args]
-    return {
-        'cmd': 'join',
-        'inputs': inputs,
-        'args': args,
-    }
-
-
-def mzip(fn, data=None, stop_short=False):
-    """Forms mzip instruction."""
-    return {
-        'cmd': 'mzip',
-        'fn': fn,
-        'inputs': [table for table, _ in data],
-        'data': data,
-        'stop_short': stop_short,
-    }
-
-
-def concat(inputs):
-    """Forms concat instruction."""
-    return {
-        'cmd': 'concat',
-        'inputs': listify(inputs)
-    }
 
 
 def register(**kwargs):

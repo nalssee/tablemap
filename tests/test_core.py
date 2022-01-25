@@ -61,6 +61,8 @@ def test_apply_group1():
         order_items1=tm.apply(size, 'order_items', by='prod_id'),
         order_items2=tm.apply(size, 'order_items', by='prod_id, order_item'),
     )
+    inst['order_items'] = dict(cmd='read', file='tests/OrderItems.csv')
+    
     tm.run()
     assert len(tm.get('order_items1')) == 7
     assert len(tm.get('order_items2')) == 16
