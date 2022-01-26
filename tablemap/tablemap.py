@@ -67,20 +67,20 @@ def _delayed_keyboard_interrupts():
 
 
 class Conn:
-    def __init__(self, 
-        dbfile=None, 
-        loc='English_United States.1252' 
-            if os.name == 'nt' else 'en_US.UTF-8',
-        # If you want to silence the messages, set it False
-        msg=True):
+    def __init__(self,
+                 dbfile=None,
+                 loc='English_United States.1252'
+                 if os.name == 'nt' else 'en_US.UTF-8',
+                 # If you want to silence the messages, set it False
+                 msg=True):
 
-        dbfile = dbfile or os.path.basename(sys.argv[0])
+        dbfile = dbfile or os.path.basename(sys.argv[0]) + '.db'
 
-        self.db = os.path.join(os.getcwd(), dbfile) 
+        self.db = os.path.join(os.getcwd(), dbfile)
         # instructions to create tables
         self.insts = {}
-        locale.setlocale(locale.LC_ALL, loc) 
-        logger.propagate = msg 
+        locale.setlocale(locale.LC_ALL, loc)
+        logger.propagate = msg
 
     def __setitem__(self, key, value):
         cmd = value[0]
@@ -91,15 +91,15 @@ class Conn:
             d['cmd'] = 'apply'
             d['fn'] = fn
             d['inputs'] = [table]
-            d['by'] = listify(d['by']) if d.get('by') else [] 
+            d['by'] = listify(d['by']) if d.get('by') else []
             d.setdefault('parallel', False)
 
-            self.insts[key] = d 
+            self.insts[key] = d
         elif cmd == 'read':
             _, file, *rest = value
             d = rest[0] if rest else {}
 
-            d['cmd'] = 'read' 
+            d['cmd'] = 'read'
             d['file'] = file
             d.setdefault('fn', None)
             d.setdefault('delimiter', None)
@@ -107,13 +107,12 @@ class Conn:
             d.setdefault('encoding', 'utf-8')
             d.setdefault('inputs', [])
 
-            self.insts[key] = d 
+            self.insts[key] = d
         elif cmd == 'join':
             _, *args = value
-
             d = {}
             d['cmd'] = 'join'
-            d['inputs'] = [args[0] for arg in args]
+            d['inputs'] = [arg[0] for arg in args]
             d['args'] = args
 
             self.insts[key] = d
@@ -127,14 +126,14 @@ class Conn:
 
         elif cmd == 'mzip':
             _, fn, data, *rest = value
-            d = rest[0] if rest else {} 
+            d = rest[0] if rest else {}
             d['cmd'] = 'mzip'
             d['fn'] = fn
             # data: [(table, columns_to_match), ...]
             d['inputs'] = [table for table, _ in data]
             d['data'] = data
             d.setdefault('stop_short', False)
-            self.insts[key]  = d
+            self.insts[key] = d
         else:
             raise UnknownCommand(cmd)
 
@@ -160,11 +159,10 @@ class Conn:
         for inst in insts:
             if inst['cmd'] == 'read':
                 dot.node(inst['output'], inst['output'])
-        try: 
+        try:
             dot.render(os.path.join(os.getcwd(), file))
         except:
             raise GraphvizNotInstalled
-
 
     def get(self, tname, cols=None, df=False):
         def getit(c):
@@ -206,7 +204,7 @@ class Conn:
 
                 else:
                     with open(os.path.join(os.getcwd(), table + '.csv'), 'w',
-                            encoding='utf-8', newline='') as f:
+                              encoding='utf-8', newline='') as f:
                         rs = _fetch(c, f'select * from {table}')
                         r0, rs = spy(rs)
                         if r0 == []:
@@ -251,7 +249,7 @@ class Conn:
             graph = _build_graph(insts)
 
             starting_points = [inst['output']
-                            for inst in insts if inst['cmd'] == 'read']
+                               for inst in insts if inst['cmd'] == 'read']
             paths = []
             for sp in starting_points:
                 paths += _dfs(graph, [sp], [])
@@ -287,7 +285,7 @@ class Conn:
                             else:
                                 logger.error(f"Failed: {inst['output']}")
                                 logger.error(f"{type(e).__name__}: {e}",
-                                            exc_info=True)
+                                             exc_info=True)
 
                             try:
                                 _drop(c, inst['output'])
@@ -311,10 +309,12 @@ class Conn:
 
             return (initial_insts_to_do, insts_to_do)
 
+
 def _append_output(kwargs):
     for k, v in kwargs.items():
         v['output'] = k
     return [v for _, v in kwargs.items()]
+
 
 def _find_required_tables(insts):
     tables = set()
@@ -324,7 +324,7 @@ def _find_required_tables(insts):
         tables.add(inst['output'])
     return tables
 
-# depth first search
+
 def _dfs(graph, path, paths=[]):
     datum = path[-1]
     if datum in graph:
@@ -357,7 +357,7 @@ def _fetch(c, query, by=None):
         if isinstance(by, list):
             rows = c.cursor().execute(query)
             rows1 = (list(rs) for _, rs in
-                        groupby(rows, _build_keyfn(by)))
+                     groupby(rows, _build_keyfn(by)))
 
         elif isinstance(by, int):
             rows = c.cursor().execute(query)
@@ -375,9 +375,9 @@ def _fetch(c, query, by=None):
 def _join(conn, tinfos, name):
     # check if a colname is a reserved keyword
     newcols = []
-    for _, _cols, _ in tinfos:
-        _cols = [c.upper() for c in listify(_cols)]
-        for c in _cols:
+    for _, cols, _ in tinfos:
+        cols = [c.upper() for c in listify(cols)]
+        for c in cols:
             if 'AS' in c:
                 newcols.append(c.split('AS')[-1])
     for x in [name] + newcols:
@@ -483,8 +483,8 @@ def _execute(c, inst):
     cmd = inst['cmd']
     if cmd == 'read':
         _read(c, inst['file'], inst['output'], delimiter=inst['delimiter'],
-               quotechar=inst['quotechar'], encoding=inst['encoding'],
-               fn=inst['fn'])
+              quotechar=inst['quotechar'], encoding=inst['encoding'],
+              fn=inst['fn'])
 
     elif cmd == 'apply':
         if not inst['parallel']:
@@ -683,7 +683,7 @@ def _execute_parallel_apply(c, inst):
 
 
 def _ls(c):
-    rows =  c.cursor().\
+    rows = c.cursor().\
         execute("select * from sqlite_master where type='table'")
     return [row['name'] for row in rows]
 
@@ -728,7 +728,7 @@ def _insert_statement(name, d):
 
 
 def _read(c, filename, name, delimiter=None, quotechar='"',
-        encoding='utf-8', newline="\n", fn=None):
+          encoding='utf-8', newline="\n", fn=None):
     total = None
     if isinstance(filename, str):
         _, ext = os.path.splitext(filename)

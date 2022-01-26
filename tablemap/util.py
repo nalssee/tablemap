@@ -7,6 +7,10 @@ from itertools import accumulate, groupby, chain, islice
 import pandas as pd
 
 
+def form(*args, **kwargs):
+    return list(args) + ([kwargs] if kwargs else [])
+
+
 def lag(cols, datecol, ns, add1fn=None, max_missings=10_000):
     """ create columns for lags and leads, ex) col_1, col_2n
     """
