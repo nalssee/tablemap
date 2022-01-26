@@ -19,10 +19,14 @@ class InvalidGroup(TablemapError):
 class UnknownConfig(TablemapError):
     pass
 
+class UnknownCommand(TablemapError):
+    pass
 
 class ReservedKeyword(TablemapError):
     pass
 
+class GraphvizNotInstalled(TablemapError):
+    pass 
 
 class InvalidColumns(TablemapError):
     pass

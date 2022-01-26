@@ -1,34 +1,31 @@
-"""main file."""
-
 import csv
 import locale
 import os
-import sys
 import random
-# from re import I
 import signal
 import sqlite3
 import string
+import sys
 from contextlib import contextmanager
 from inspect import signature
 from itertools import groupby
 from shutil import copyfile
-from pathos.multiprocessing import ProcessingPool as Pool
 
 import pandas as pd
 import psutil
 from graphviz import Digraph
 from more_itertools import chunked, spy
 from openpyxl import Workbook
+from pathos.multiprocessing import ProcessingPool as Pool
 from sas7bdat import SAS7BDAT
 from tqdm import tqdm
 
-from .config import (_CONFIG, _CONN, _DBNAME, _GRAPH_NAME,
-                     _JOBS, _TEMP, _WS,
-                     _RESERVED_KEYWORDS)
-from .exceptions import (InvalidColumns, InvalidGroup, NoRowToInsert,
+from .config import _RESERVED_KEYWORDS, _TEMP
+
+from .exceptions import (GraphvizNotInstalled, InvalidColumns, InvalidGroup, NoRowToInsert,
                          NoRowToWrite, NoSuchTableFound, ReservedKeyword,
-                         SkipThisTurn, TableDuplication, UnknownConfig)
+                         SkipThisTurn, TableDuplication, UnknownCommand,
+                         UnknownConfig)
 from .logging import logger
 from .util import _build_keyfn, listify, step
 
@@ -36,8 +33,9 @@ from .util import _build_keyfn, listify, step
 
 
 @contextmanager
-def _connect(dbfile):
-    conn = _Connection(dbfile)
+def _connect(db):
+    conn = sqlite3.connect(db)
+    conn.row_factory = _dict_factory
     try:
         yield conn
     finally:
@@ -46,11 +44,8 @@ def _connect(dbfile):
         # and the second ctrl-c interrupts the block in the middle
         # so that the database is corrupted
         with _delayed_keyboard_interrupts():
-            # should I close the cursor?
-            conn._cursor.close()
-            conn._conn.commit()
-            conn._conn.close()
-            conn._is_connected = False
+            conn.commit()
+            conn.close()
 
 
 @contextmanager
@@ -71,308 +66,382 @@ def _delayed_keyboard_interrupts():
             old_handler(*signal_received)
 
 
-class Inst:
-    def __init__(self, dbfile=None):
+class Conn:
+    def __init__(self, 
+        dbfile=None, 
+        loc='English_United States.1252' 
+            if os.name == 'nt' else 'en_US.UTF-8',
+        # If you want to silence the messages, set it False
+        msg=True):
+
+        dbfile = dbfile or os.path.basename(sys.argv[0])
+
         self.db = os.path.join(os.getcwd(), dbfile) 
-        self.tables = {}
+        # instructions to create tables
+        self.insts = {}
+        locale.setlocale(locale.LC_ALL, loc) 
+        logger.propagate = msg 
 
     def __setitem__(self, key, value):
         cmd = value[0]
-        if cmd == "apply":
-            _, fn, *rest = value
+        if cmd == "apply" or cmd == "map":
+            _, fn, table, *rest = value
+            d = rest[0] if rest else {}
 
-            self.tables[key] = {
-                'cmd': cmd,
-                'fn': value[1],
-                'inputs': [value[2]]
+            d['cmd'] = 'apply'
+            d['fn'] = fn
+            d['inputs'] = [table]
+            d['by'] = listify(d['by']) if d.get('by') else [] 
+            d.setdefault('parallel', False)
 
+            self.insts[key] = d 
+        elif cmd == 'read':
+            _, file, *rest = value
+            d = rest[0] if rest else {}
 
-            } 
-        elif cmd == "":
-            pass
+            d['cmd'] = 'read' 
+            d['file'] = file
+            d.setdefault('fn', None)
+            d.setdefault('delimiter', None)
+            d.setdefault('quotechar', '"')
+            d.setdefault('encoding', 'utf-8')
+            d.setdefault('inputs', [])
 
+            self.insts[key] = d 
+        elif cmd == 'join':
+            _, *args = value
 
-        self.tables[key] = value
+            d = {}
+            d['cmd'] = 'join'
+            d['inputs'] = [args[0] for arg in args]
+            d['args'] = args
 
-    def run(self):
-        pass
+            self.insts[key] = d
+        # matching zip for more complex joining procs
+        elif cmd == 'concat':
+            _, tables = value
+            d = {}
+            d['cmd'] = 'concat'
+            d['intputs'] = listify(tables)
+            self.insts[key] = d
 
-def apply(fn=None, data=None, by=None, parallel=False):
-    """Forms apply instruction."""
-    return {
-        'cmd': 'apply',
-        'fn': fn,
-        'inputs': [data],
-        'by': listify(by) if by else None,
-        'parallel': parallel,
-    }
-
-def load(file=None, fn=None, delimiter=None, quotechar='"', encoding='utf-8'):
-    """Forms load instruction."""
-    return {'cmd': 'load',
-            'file': file,
-            'fn': fn,
-            'delimiter': delimiter,
-            'quotechar': quotechar,
-            'encoding': encoding,
-            'inputs': [],
-            }
-
-
-
-def join(*args):
-    """Forms join instruction."""
-    inputs = [arg[0] for arg in args]
-    return {
-        'cmd': 'join',
-        'inputs': inputs,
-        'args': args,
-    }
-
-
-def mzip(fn, data=None, stop_short=False):
-    """Forms mzip instruction."""
-    return {
-        'cmd': 'mzip',
-        'fn': fn,
-        'inputs': [table for table, _ in data],
-        'data': data,
-        'stop_short': stop_short,
-    }
-
-
-def concat(inputs):
-    """Forms concat instruction."""
-    return {
-        'cmd': 'concat',
-        'inputs': listify(inputs)
-    }
-
-
-    
-class _Connection:
-    def __init__(self, dbfile):
-        dbfile = os.path.join(_WS[0], dbfile)
-        locale.setlocale(locale.LC_ALL, _CONFIG['locale'])
-        logger.propagate = _CONFIG['msg']
-        self._conn = sqlite3.connect(dbfile)
-        self._conn.row_factory = _dict_factory
-        self._cursor = self._conn.cursor()
-        self._is_connected = True
-        # DO NOT re_CONFIGure pragmas. Defaults are defaults for a reason.
-        # You could make it faster but with a cost. It could corrupt the disk
-        # image of the database.
-
-    def fetch(self, query, by=None):
-        if by and isinstance(by, list) and by != ['*'] and\
-                all(isinstance(c, str) for c in by):
-            query += " order by " + ','.join(by)
-        if by:
-            if isinstance(by, list):
-                rows = self._conn.cursor().execute(query)
-                rows1 = (list(rs) for _, rs in
-                         groupby(rows, _build_keyfn(by)))
-
-            elif isinstance(by, int):
-                rows = self._conn.cursor().execute(query)
-                rows1 = chunked(rows, by)
-
-            else:
-                raise InvalidGroup(by)
-
-            yield from rows1
+        elif cmd == 'mzip':
+            _, fn, data, *rest = value
+            d = rest[0] if rest else {} 
+            d['cmd'] = 'mzip'
+            d['fn'] = fn
+            # data: [(table, columns_to_match), ...]
+            d['inputs'] = [table for table, _ in data]
+            d['data'] = data
+            d.setdefault('stop_short', False)
+            self.insts[key]  = d
         else:
-            rows = self._conn.cursor().execute(query)
-            yield from rows
+            raise UnknownCommand(cmd)
 
-    def insert(self, rs, name):
-        r0, rs = spy(rs)
-        if r0 == []:
-            raise NoRowToInsert(name)
-
-        cols = list(r0[0])
-        for x in [name] + cols:
-            if _is_reserved(x):
-                raise ReservedKeyword(x)
-
-        try:
-            self._cursor.execute(_create_statement(name, cols))
-            istmt = _insert_statement(name, r0[0])
-            self._cursor.executemany(istmt, rs)
-        except sqlite3.OperationalError:
-            raise InvalidColumns(cols)
-
-    def load(self, filename, name, delimiter=None, quotechar='"',
-             encoding='utf-8', newline="\n", fn=None):
-        total = None
-        if isinstance(filename, str):
-            _, ext = os.path.splitext(filename)
-            if ext.lower() == '.xlsx' or ext.lower() == ".xls":
-                seq = _read_excel(filename)
-            elif ext.lower() == '.sas7bdat':
-                seq = _read_sas(filename)
-            elif ext.lower() == ".dta":
-                seq = _read_stata(filename)
-            else:
-                # default delimiter is ","
-                delimiter = delimiter or\
-                    ("\t" if ext.lower() == ".tsv" else ",")
-                seq = _read_csv(filename, delimiter=delimiter,
-                                quotechar=quotechar, encoding=encoding,
-                                newline=newline)
-                total = _line_count(filename, encoding, newline)
-        else:
-            # iterator, since you can pass an iterator
-            # functions of 'load' should be limited
-            seq = filename
-
-        seq = tqdm(seq, total=total)
-
-        if fn:
-            seq = _flatten(fn(rs) for rs in seq)
-        self.insert(seq, name)
-
-    def get_tables(self):
-        query = self._cursor.\
-            execute("select * from sqlite_master where type='table'")
-        return [row['name'] for row in query]
+    def ls(self):
+        with _connect(self.db) as c:
+            return _ls(c)
 
     def drop(self, tables):
-        tables = listify(tables)
-        for table in tables:
-            if _is_reserved(table):
-                raise ReservedKeyword(table)
-            self._cursor.execute(f'drop table if exists {table}')
+        with _connect(self.db) as c:
+            _drop(c, tables)
 
-    def join(self, tinfos, name):
-        # check if a colname is a reserved keyword
-        newcols = []
-        for _, _cols, _ in tinfos:
-            _cols = [c.upper() for c in listify(_cols)]
-            for c in _cols:
-                if 'AS' in c:
-                    newcols.append(c.split('AS')[-1])
-        for x in [name] + newcols:
-            if _is_reserved(x):
-                raise ReservedKeyword(x)
+    def graph(self, file=None):
+        file = file or os.path.splitext(self.db)[0] + ".gv"
+        insts = _append_output(self.insts)
+        graph = _build_graph(insts)
 
-        tname0, _, mcols0 = tinfos[0]
-        join_clauses = []
-        for i, (tname1, _, mcols1) in enumerate(tinfos[1:], 1):
-            eqs = []
-            for c0, c1 in zip(listify(mcols0), listify(mcols1)):
-                if c1:
-                    # allows expression such as 'col + 4' for 'c1',
-                    # for example. somewhat sneaky though
-                    if isinstance(c1, str):
-                        eqs.append(f't0.{c0} = t{i}.{c1}')
-                    else:
-                        # c1 comes with a binary operator like ">=", ">" ...
-                        binop, c1 = c1
-                        eqs.append(f't0.{c0} {binop} t{i}.{c1}')
+        dot = Digraph()
+        for k, v in graph.items():
+            dot.node(k, k)
+            if k != v:
+                for v1 in v:
+                    dot.edge(k, v1)
+        for inst in insts:
+            if inst['cmd'] == 'read':
+                dot.node(inst['output'], inst['output'])
+        try: 
+            dot.render(os.path.join(os.getcwd(), file))
+        except:
+            raise GraphvizNotInstalled
 
-            join_clauses.\
-                append(f"left join {tname1} as t{i} on {' and '.join(eqs)}")
-        jcs = ' '.join(join_clauses)
 
-        allcols = []
-        for i, (_, cols, _) in enumerate(tinfos):
-            for c in listify(cols):
-                if c == '*':
-                    allcols += [f't{i}.{c1}'
-                                for c1 in self.
-                                _cols(f'select * from {tinfos[i][0]}')]
+    def get(self, tname, cols=None, df=False):
+        def getit(c):
+            if tname in _ls(c):
+                if cols:
+                    sql = f"""select * from {tname}
+                            order by {','.join(listify(cols))}"""
                 else:
-                    allcols.append(f't{i}.{c}')
+                    sql = f"select * from {tname}"
+                return pd.read_sql(sql, c) if df else list(_fetch(c, sql))
+            else:
+                raise NoSuchTableFound(tname)
 
-        # create indices
-        ind_tnames = []
-        for tname, _, mcols in tinfos:
-            mcols1 = list(dict.fromkeys(c if isinstance(c, str) else c[1]
-                                        for c in listify(mcols) if c))
-            ind_tname = tname + _random_string(10)
-            # allows expression such as 'col + 4' for indexing, for example.
-            # https://www.sqlite.org/expridx.html
-            self._cursor.execute(f"""
-            create index {ind_tname} on {tname}({', '.join(mcols1)})""")
-
-        query = f"""
-        create table {name} as select
-        {', '.join(allcols)} from {tname0} as t0 {jcs}
-        """
-        self._cursor.execute(query)
-
-        # drop indices, not so necessary
-        for ind_tname in ind_tnames:
-            self._cursor.execute(f"drop index {ind_tname}")
+        with _connect(self.db) as c:
+            tname = tname.strip()
+            try:
+                return getit(c)
+            except NoSuchTableFound as e:
+                # when it's possible to execute once the other insts are done
+                if tname in self.insts:
+                    raise SkipThisTurn
+                else:
+                    raise e
 
     def export(self, tables):
-        for table in listify(tables):
-            table, ext = os.path.splitext(table)
-            if ext.lower() == '.xlsx':
-                rs = self.fetch(f'select * from {table}')
-                book = Workbook()
-                sheet = book.active
-                r0, rs = spy(rs)
-                header = list(r0[0])
-                sheet.append(header)
-                for r in rs:
-                    sheet.append(list(r.values()))
-                book.save(os.path.join(_WS[0], f'{table}.xlsx'))
-
-            else:
-                with open(os.path.join(_WS[0], table + '.csv'), 'w',
-                          encoding='utf-8', newline='') as f:
-                    rs = self.fetch(f'select * from {table}')
+        with _connect(self.db) as c:
+            for table in listify(tables):
+                table, ext = os.path.splitext(table)
+                if ext.lower() == '.xlsx':
+                    rs = _fetch(c, f'select * from {table}')
+                    book = Workbook()
+                    sheet = book.active
                     r0, rs = spy(rs)
-                    if r0 == []:
-                        raise NoRowToWrite
-                    fieldnames = list(r0[0])
-                    writer = csv.DictWriter(f, fieldnames=fieldnames)
-                    writer.writeheader()
+                    header = list(r0[0])
+                    sheet.append(header)
                     for r in rs:
-                        writer.writerow(r)
+                        sheet.append(list(r.values()))
+                    book.save(os.path.join(os.getcwd(), f'{table}.xlsx'))
 
-    def _cols(self, query):
-        return [c[0] for c in self._cursor.execute(query).description]
+                else:
+                    with open(os.path.join(os.getcwd(), table + '.csv'), 'w',
+                            encoding='utf-8', newline='') as f:
+                        rs = _fetch(c, f'select * from {table}')
+                        r0, rs = spy(rs)
+                        if r0 == []:
+                            raise NoRowToWrite
+                        fieldnames = list(r0[0])
+                        writer = csv.DictWriter(f, fieldnames=fieldnames)
+                        writer.writeheader()
+                        for r in rs:
+                            writer.writerow(r)
 
-    def _size(self, table):
-        self._cursor.execute(f"select count(*) as c from {table}")
-        return self._cursor.fetchone()['c']
+    def run(self):
+        insts = _append_output(self.insts)
+        required_tables = _find_required_tables(insts)
 
+        with _connect(self.db) as c:
+            def delete_after(missing_table, paths):
+                for path in paths:
+                    if missing_table in path:
+                        for x in path[path.index(missing_table):]:
+                            _drop(c, x)
 
-def get(tname, cols=None, df=False):
-    """Get a list of rows (the whole table) ordered by cols.
+            def get_missing_tables():
+                existing_tables = _ls(c)
+                return [table for table in required_tables
+                        if table not in existing_tables]
 
-    :param tname: table name
-    :param cols: comma separated string
-    :returns: a list of rows
-    """
-    def getit(c):
-        if tname in c.get_tables():
-            if cols:
-                sql = f"""select * from {tname}
-                          order by {','.join(listify(cols))}"""
-            else:
-                sql = f"select * from {tname}"
-            return pd.read_sql(sql, c._conn) if df else list(c.fetch(sql))
-        else:
-            raise NoSuchTableFound(tname)
+            def find_insts_to_do(insts):
+                missing_tables = get_missing_tables()
+                result = []
+                for inst in insts:
+                    for table in inst['inputs'] + [inst['output']]:
+                        if table in missing_tables:
+                            result.append(inst)
+                            break
+                return result
 
-    tname = tname.strip()
-    c = _CONN[0]
-    if c and c._is_connected:
-        try:
-            return getit(c)
-        except NoSuchTableFound as e:
-            # when it's possible to execute once the other jobs are done
-            if tname in _JOBS:
-                raise SkipThisTurn
-            else:
-                raise e
+            def is_doable(inst):
+                missing_tables = get_missing_tables()
+                return all(table not in missing_tables for table in inst['inputs'])\
+                    and inst['output'] in missing_tables
+
+            graph = _build_graph(insts)
+
+            starting_points = [inst['output']
+                            for inst in insts if inst['cmd'] == 'read']
+            paths = []
+            for sp in starting_points:
+                paths += _dfs(graph, [sp], [])
+
+            for mt in get_missing_tables():
+                delete_after(mt, paths)
+
+            insts_to_do = find_insts_to_do(insts)
+            initial_insts_to_do = list(insts_to_do)
+            logger.info(f'To Create: {[j["output"] for j in insts_to_do]}')
+
+            while insts_to_do:
+                cnt = 0
+                for i, inst in enumerate(insts_to_do):
+                    if is_doable(inst):
+                        try:
+                            if inst['cmd'] != 'apply':
+                                logger.info(
+                                    f"processing {inst['cmd']}: {inst['output']}")
+                            _execute(c, inst)
+
+                        except SkipThisTurn:
+                            continue
+
+                        except Exception as e:
+
+                            if isinstance(e, NoRowToInsert):
+                                # Many times you want it to be silenced
+                                # because you want to test it before actually
+                                # write the code
+                                logger.warning(
+                                    f"No row to insert: {inst['output']}")
+                            else:
+                                logger.error(f"Failed: {inst['output']}")
+                                logger.error(f"{type(e).__name__}: {e}",
+                                            exc_info=True)
+
+                            try:
+                                _drop(c, inst['output'])
+                            except Exception:
+                                pass
+
+                            logger.warning(
+                                f"Unfinished: "
+                                f"{[inst['output'] for inst in insts_to_do]}")
+                            return (initial_insts_to_do, insts_to_do)
+                        del insts_to_do[i]
+                        cnt += 1
+                # No insts can be done anymore
+                if cnt == 0:
+                    for j in insts_to_do:
+                        logger.warning(f'Unfinished: {j["output"]}')
+                        for t in j['inputs']:
+                            if t not in _ls(c):
+                                logger.warning(f'Table not found: {t}')
+                    return (initial_insts_to_do, insts_to_do)
+
+            return (initial_insts_to_do, insts_to_do)
+
+def _append_output(kwargs):
+    for k, v in kwargs.items():
+        v['output'] = k
+    return [v for _, v in kwargs.items()]
+
+def _find_required_tables(insts):
+    tables = set()
+    for inst in insts:
+        for table in inst['inputs']:
+            tables.add(table)
+        tables.add(inst['output'])
+    return tables
+
+# depth first search
+def _dfs(graph, path, paths=[]):
+    datum = path[-1]
+    if datum in graph:
+        for val in graph[datum]:
+            new_path = path + [val]
+            paths = _dfs(graph, new_path, paths)
     else:
-        with _connect(_DBNAME) as c:
-            return getit(c)
+        paths += [path]
+    return paths
+
+
+def _build_graph(insts):
+    graph = {}
+    for inst in insts:
+        for ip in inst['inputs']:
+            if graph.get(ip):
+                graph[ip].add(inst['output'])
+            else:
+                graph[ip] = {inst['output']}
+    for x in graph:
+        graph[x] = list(graph[x])
+    return graph
+
+
+def _fetch(c, query, by=None):
+    if by and isinstance(by, list) and by != ['*'] and\
+            all(isinstance(c, str) for c in by):
+        query += " order by " + ','.join(by)
+    if by:
+        if isinstance(by, list):
+            rows = c.cursor().execute(query)
+            rows1 = (list(rs) for _, rs in
+                        groupby(rows, _build_keyfn(by)))
+
+        elif isinstance(by, int):
+            rows = c.cursor().execute(query)
+            rows1 = chunked(rows, by)
+
+        else:
+            raise InvalidGroup(by)
+
+        yield from rows1
+    else:
+        rows = c.cursor().execute(query)
+        yield from rows
+
+
+def _join(conn, tinfos, name):
+    # check if a colname is a reserved keyword
+    newcols = []
+    for _, _cols, _ in tinfos:
+        _cols = [c.upper() for c in listify(_cols)]
+        for c in _cols:
+            if 'AS' in c:
+                newcols.append(c.split('AS')[-1])
+    for x in [name] + newcols:
+        if _is_reserved(x):
+            raise ReservedKeyword(x)
+
+    tname0, _, mcols0 = tinfos[0]
+    join_clauses = []
+    for i, (tname1, _, mcols1) in enumerate(tinfos[1:], 1):
+        eqs = []
+        for c0, c1 in zip(listify(mcols0), listify(mcols1)):
+            if c1:
+                # allows expression such as 'col + 4' for 'c1',
+                # for example. somewhat sneaky though
+                if isinstance(c1, str):
+                    eqs.append(f't0.{c0} = t{i}.{c1}')
+                else:
+                    # c1 comes with a binary operator like ">=", ">" ...
+                    binop, c1 = c1
+                    eqs.append(f't0.{c0} {binop} t{i}.{c1}')
+
+        join_clauses.\
+            append(f"left join {tname1} as t{i} on {' and '.join(eqs)}")
+    jcs = ' '.join(join_clauses)
+
+    allcols = []
+    for i, (_, cols, _) in enumerate(tinfos):
+        for c in listify(cols):
+            if c == '*':
+                allcols += [f't{i}.{c1}'
+                            for c1 in _cols(conn, f'select * from {tinfos[i][0]}')]
+            else:
+                allcols.append(f't{i}.{c}')
+
+    # create indices
+    ind_tnames = []
+    for tname, _, mcols in tinfos:
+        mcols1 = list(dict.fromkeys(c if isinstance(c, str) else c[1]
+                                    for c in listify(mcols) if c))
+        ind_tname = tname + _random_string(10)
+        # allows expression such as 'col + 4' for indexing, for example.
+        # https://www.sqlite.org/expridx.html
+        conn.cursor().execute(f"""
+            create index {ind_tname} on {tname}({', '.join(mcols1)})""")
+
+    query = f"""
+        create table {name} as select
+        {', '.join(allcols)} from {tname0} as t0 {jcs}
+    """
+    conn.cursor().execute(query)
+
+    # drop indices, not so necessary
+    for ind_tname in ind_tnames:
+        conn.cursor().execute(f"drop index {ind_tname}")
+
+
+def _cols(conn, query):
+    return [c[0] for c in conn.cursor().execute(query).description]
+
+
+def _size(conn, table):
+    cur = conn.cursor()
+    cur.execute(f"select count(*) as c from {table}")
+    return cur.fetchone()['c']
 
 
 def _dict_factory(cursor, row):
@@ -410,56 +479,41 @@ def _tqdm(seq, total, by):
                 pbar.update(1)
 
 
-def _execute(c, job):
-    cmd = job['cmd']
-    if cmd == 'load':
-        c.load(job['file'], job['output'], delimiter=job['delimiter'],
-               quotechar=job['quotechar'], encoding=job['encoding'],
-               fn=job['fn'])
+def _execute(c, inst):
+    cmd = inst['cmd']
+    if cmd == 'read':
+        _read(c, inst['file'], inst['output'], delimiter=inst['delimiter'],
+               quotechar=inst['quotechar'], encoding=inst['encoding'],
+               fn=inst['fn'])
 
     elif cmd == 'apply':
-        if not job['parallel']:
-            _execute_serial_apply(c, job)
+        if not inst['parallel']:
+            _execute_serial_apply(c, inst)
         else:
-            _execute_parallel_apply(c, job)
-
-    elif cmd == 'select':
-        base_stmt = f"""
-        create table {job['output']} as 
-        select {' , '.join(job['cols'])} 
-        from {job['inputs'][0]} 
-        """
-        if job['where']:
-            base_stmt += f" where {job['where']}"
-        if job['group_by']:
-            base_stmt += f" group by {' , '.join(job['group_by'])}"
-        if job['having']:
-            base_stmt += f" having {job['having']}"
-        if job['order_by']:
-            base_stmt += f" order by {' , '.join(job['order_by'])}"
-
-        c._cursor.execute(base_stmt)
+            _execute_parallel_apply(c, inst)
 
     # The only place where 'insert' is not used
     elif cmd == 'join':
-        c.join(job['args'], job['output'])
+        _join(c, inst['args'], inst['output'])
 
     elif cmd == 'mzip':
-        gseqs = [groupby(c.fetch(f"""select * from {table}
+        gseqs = [groupby(_fetch(c, f"""select * from {table}
                                      order by {', '.join(listify(cols))}"""),
                          _build_keyfn(cols))
-                 for table, cols in job['data']]
-        fn = job['fn']() if _is_thunk(job['fn']) else job['fn']
+                 for table, cols in inst['data']]
+        fn = inst['fn']() if _is_thunk(inst['fn']) else inst['fn']
         seq = _flatten(fn(*xs) for xs in
-                       tqdm(step(gseqs, stop_short=job['stop_short'])))
-        c.insert(seq, job['output'])
+                       tqdm(step(gseqs, stop_short=inst['stop_short'])))
+        _insert(c, seq, inst['output'])
 
     elif cmd == 'concat':
         def gen():
-            for inp in job['inputs']:
-                for r in c.fetch(f"select * from {inp}"):
+            for inp in inst['inputs']:
+                for r in _fetch(c, f"select * from {inp}"):
                     yield r
-        c.insert(tqdm(gen()), job['output'])
+        _insert(c, tqdm(gen()), inst['output'])
+    else:
+        raise UnknownCommand(cmd)
 
 
 def _line_count(fname, encoding, newline):
@@ -470,36 +524,36 @@ def _line_count(fname, encoding, newline):
             if not b:
                 break
             yield b
-    fname1 = os.path.join(_WS[0], fname)
+    fname1 = os.path.join(os.getcwd(), fname)
     with open(fname1, encoding=encoding, newline=newline, errors='ignore') as f:
         # subtract -1 for a header
         return (sum(bl.count("\n") for bl in blocks(f))) - 1
 
 
-def _execute_serial_apply(c, job):
-    tsize = c._size(job['inputs'][0])
-    logger.info(f"processing {job['cmd']}: {job['output']}")
-    seq = c.fetch(f"select * from {job['inputs'][0]}", job['by'])
-    evaled_fn = job['fn']() if _is_thunk(job['fn']) else job['fn']
-    seq1 = _applyfn(evaled_fn, _tqdm(seq, tsize, job['by']))
-    c.insert(seq1, job['output'])
+def _execute_serial_apply(c, inst):
+    tsize = _size(c, inst['inputs'][0])
+    logger.info(f"processing {inst['cmd']}: {inst['output']}")
+    seq = _fetch(c, f"select * from {inst['inputs'][0]}", inst['by'])
+    evaled_fn = inst['fn']() if _is_thunk(inst['fn']) else inst['fn']
+    seq1 = _applyfn(evaled_fn, _tqdm(seq, tsize, inst['by']))
+    _insert(c, seq1, inst['output'])
 
 
 # sqlite3 in osx can't handle multiple connections properly.
 # Do not use multiprocessing.Queue. It's too pricy for this work.
-def _execute_parallel_apply(c, job):
+def _execute_parallel_apply(c, inst):
     max_workers = psutil.cpu_count(logical=False)
-    tsize = c._size(job['inputs'][0])
+    tsize = _size(c, inst['inputs'][0])
     # Deal with corner cases
     if max_workers < 2 or tsize < 2:
-        _execute_serial_apply(c, job)
+        _execute_serial_apply(c, inst)
         return
 
-    itable = job['inputs'][0]
-    tdir = os.path.join(_WS[0], _TEMP)
+    itable = inst['inputs'][0]
+    tdir = os.path.join(os.getcwd(), _TEMP)
     if not os.path.exists(tdir):
         os.makedirs(tdir)
-    evaled_fn = job['fn']() if _is_thunk(job['fn']) else job['fn']
+    evaled_fn = inst['fn']() if _is_thunk(inst['fn']) else inst['fn']
     tcon = 'con' + _random_string(9)
     ttable = "tbl" + _random_string(9)
     breaks = [int(i * tsize / max_workers)
@@ -513,10 +567,10 @@ def _execute_parallel_apply(c, job):
         with _connect(dbfile) as c1:
             n = cut[1] - cut[0]
             seq = _applyfn(evaled_fn,
-                           _tqdm(c1.fetch(query, by=job['by']),
-                                 n, by=job['by']))
+                           _tqdm(_fetch(c1, query, by=inst['by']),
+                                 n, by=inst['by']))
             try:
-                c1.insert(seq, job['output'])
+                _insert(c1, seq, inst['output'])
             except NoRowToInsert:
                 pass
 
@@ -524,7 +578,7 @@ def _execute_parallel_apply(c, job):
         succeeded_dbfiles = []
         for dbfile in dbfiles:
             with _connect(dbfile) as c1:
-                if job['output'] in c1.get_tables():
+                if inst['output'] in _ls(c1):
                     succeeded_dbfiles.append(dbfile)
 
         if succeeded_dbfiles == []:
@@ -532,17 +586,17 @@ def _execute_parallel_apply(c, job):
 
         with _connect(succeeded_dbfiles[0]) as c1:
             # query order is not actually specified
-            ocols = c1._cols(f"select * from {job['output']}")
-        c._cursor.execute(_create_statement(job['output'], ocols))
+            ocols = _cols(c1, f"select * from {inst['output']}")
+        c.cursor().execute(_create_statement(inst['output'], ocols))
 
         # collect tables from dbfiles
         for dbfile in succeeded_dbfiles:
-            c._cursor.execute(f"attach database '{dbfile}' as {tcon}")
-            c._cursor.execute(f"""insert into {job['output']}
-                                  select * from {tcon}.{job['output']}
+            c.cursor().execute(f"attach database '{dbfile}' as {tcon}")
+            c.cursor().execute(f"""insert into {inst['output']}
+                                  select * from {tcon}.{inst['output']}
                                """)
-            c._conn.commit()
-            c._cursor.execute(f"detach database {tcon}")
+            c.commit()
+            c.cursor().execute(f"detach database {tcon}")
 
     def _delete_dbfiles(dbfiles):
         with _delayed_keyboard_interrupts():
@@ -551,7 +605,7 @@ def _execute_parallel_apply(c, job):
                     os.remove(dbfile)
 
     # condition for parallel work by group
-    if job['by']:
+    if inst['by']:
         def new_breaks(breaks, group_breaks):
             index = 0
             result = []
@@ -570,18 +624,18 @@ def _execute_parallel_apply(c, job):
 
         try:
             dbfile0 = os.path.join(_TEMP, _random_string(10))
-            c._cursor.execute(f"attach database '{dbfile0}' as {tcon}")
-            c._cursor.execute(f"""create table {tcon}.{ttable} as select * from {itable}
-                                  order by {','.join(job['by'])}
+            c.cursor().execute(f"attach database '{dbfile0}' as {tcon}")
+            c.cursor().execute(f"""create table {tcon}.{ttable} as select * from {itable}
+                                  order by {','.join(inst['by'])}
                                """)
-            c._conn.commit()
+            c.commit()
             group_breaks = \
-                [list(r.values())[0] for r in c._cursor.execute(
+                [list(r.values())[0] for r in c.cursor().execute(
                     f"""select _ROWID_ from {tcon}.{ttable}
-                        group by {','.join(job['by'])} having MAX(_ROWID_)
+                        group by {','.join(inst['by'])} having MAX(_ROWID_)
                     """)]
             if len(group_breaks) == 1:
-                _execute_serial_apply(c, job)
+                _execute_serial_apply(c, inst)
                 return
             breaks = new_breaks(breaks, group_breaks)
 
@@ -589,9 +643,9 @@ def _execute_parallel_apply(c, job):
                                    for _ in range(len(breaks))]
             exe = Pool(len(dbfiles))
 
-            c._cursor.execute(f"detach database {tcon}")
+            c.cursor().execute(f"detach database {tcon}")
             logger.info(
-                f"processing {job['cmd']}: {job['output']}"
+                f"processing {inst['cmd']}: {inst['output']}"
                 f" (multiprocessing: {len(breaks) + 1})")
             for dbfile in dbfiles[1:]:
                 copyfile(dbfiles[0], dbfile)
@@ -609,17 +663,17 @@ def _execute_parallel_apply(c, job):
             dbfiles = [os.path.join(_TEMP, _random_string(10))
                        for _ in range(len(breaks) + 1)]
             exe = Pool(len(dbfiles))
-            c._cursor.execute(f"attach database '{dbfiles[0]}' as {tcon}")
-            c._cursor.execute(f"""create table {tcon}.{ttable}
+            c.cursor().execute(f"attach database '{dbfiles[0]}' as {tcon}")
+            c.cursor().execute(f"""create table {tcon}.{ttable}
                                   as select * from {itable}
                                """)
-            c._conn.commit()
-            c._cursor.execute(f"detach database {tcon}")
+            c.commit()
+            c.cursor().execute(f"detach database {tcon}")
             for dbfile in dbfiles[1:]:
                 copyfile(dbfiles[0], dbfile)
 
             logger.info(
-                f"processing {job['cmd']}: {job['output']}"
+                f"processing {inst['cmd']}: {inst['output']}"
                 f" (multiprocessing: {len(breaks) + 1})")
 
             exe.map(_proc, dbfiles, zip([0] + breaks, breaks + [tsize]))
@@ -628,227 +682,18 @@ def _execute_parallel_apply(c, job):
             _delete_dbfiles(dbfiles)
 
 
-
-def register(**kwargs):
-    """Register processes as keyword args.
-
-    .. highlight:: python
-    .. code-block:: python
-
-        import tablemap as tm 
-
-        tm.register(
-            table_name = tm.load('sample.csv'),
-            table_name1 = tm.apply(simple_process, 'table_name'),
-        )
-
-        tm.run()
-    """
-    for k, _ in kwargs.items():
-        if _JOBS.get(k, False):
-            raise TableDuplication(k)
-    _JOBS.update(kwargs)
+def _ls(c):
+    rows =  c.cursor().\
+        execute("select * from sqlite_master where type='table'")
+    return [row['name'] for row in rows]
 
 
-def run(**kwargs):
-    """Run registered processes, only those that are not in the database and\
-        also that depend on those missing processes.
-
-    :param ws: working space, the default is where the script is.
-    :type ws: path as str
-    :param locale: The default is en_US.UTF-8
-        (English_United States.1252 for Windows)
-    :param msg: You may not want visual noises in the terminal.
-    :param refresh: You may want to rerun the script over and over again,
-        changing the code a bit. It could be tedious to delete the table
-        everytime in those circumstances.
-
-        Pass table names in string, for example 'table1, table2'.
-    :type refresh: comma separated string of table names
-    :param export: Export tables in csv. for example 'table1, table2'
-        Those CSVs will be in the workspace as table1.csv, table2.csv.
-    :type export: comma separated string of table names
-    :returns: Actually returns something for testing purposes,
-        but not relavant.
-    """
-    global _CONFIG
-    try:
-        default_configs = {k: v for k, v in _CONFIG.items()}
-        for k, v in kwargs.items():
-            if k not in _CONFIG:
-                raise UnknownConfig(k)
-            _CONFIG[k] = v
-        return _run()
-    finally:
-        _CONFIG = default_configs
-
-
-def _run():
-    def append_output(kwargs):
-        for k, v in kwargs.items():
-            v['output'] = k
-        return [v for _, v in kwargs.items()]
-
-    def find_required_tables(jobs):
-        tables = set()
-        for job in jobs:
-            for table in job['inputs']:
-                tables.add(table)
-            tables.add(job['output'])
-        return tables
-
-    # depth first search
-    def dfs(graph, path, paths=[]):
-        datum = path[-1]
-        if datum in graph:
-            for val in graph[datum]:
-                new_path = path + [val]
-                paths = dfs(graph, new_path, paths)
-        else:
-            paths += [path]
-        return paths
-
-    # graph: {input: [out1, out2, ...]}
-    def build_graph(jobs):
-        graph = {}
-        for job in jobs:
-            for ip in job['inputs']:
-                if graph.get(ip):
-                    graph[ip].add(job['output'])
-                else:
-                    graph[ip] = {job['output']}
-        for x in graph:
-            graph[x] = list(graph[x])
-        return graph
-
-    def render_graph(graph, jobs):
-        dot = Digraph()
-        for k, v in graph.items():
-            dot.node(k, k)
-            if k != v:
-                for v1 in v:
-                    dot.edge(k, v1)
-        for job in jobs:
-            if job['cmd'] == 'load':
-                dot.node(job['output'], job['output'])
-        dot.render(os.path.join(_WS[0], _GRAPH_NAME))
-
-    jobs = append_output(_JOBS)
-    required_tables = find_required_tables(jobs)
-    with _connect(_DBNAME) as c:
-        _CONN[0] = c
-
-        def delete_after(missing_table, paths):
-            for path in paths:
-                if missing_table in path:
-                    for x in path[path.index(missing_table):]:
-                        c.drop(x)
-
-        def get_missing_tables():
-            existing_tables = c.get_tables()
-            return [table for table in required_tables
-                    if table not in existing_tables]
-
-        def find_jobs_to_do(jobs):
-            missing_tables = get_missing_tables()
-            result = []
-            for job in jobs:
-                for table in job['inputs'] + [job['output']]:
-                    if table in missing_tables:
-                        result.append(job)
-                        break
-            return result
-
-        def is_doable(job):
-            missing_tables = get_missing_tables()
-            return all(table not in missing_tables for table in job['inputs'])\
-                and job['output'] in missing_tables
-
-        graph = build_graph(jobs)
-        try:
-            render_graph(graph, jobs)
-        except Exception:
-            pass
-
-        # delete tables in 'refresh'
-        if _CONFIG['refresh']:
-            c.drop(listify(_CONFIG['refresh']))
-
-        if _CONFIG['create_function']:
-            for k, v in _CONFIG['create_function'].items():
-                c._conn.create_function(k, *v)
-
-        if _CONFIG['create_aggregate']:
-            for k, v in _CONFIG['create_aggregate'].items():
-                c._conn.create_aggregate(k, *v)
-
-        if _CONFIG['create_collation']:
-            for k, v in _CONFIG['create_collation'].items():
-                c._conn.create_collation(k, *v)
-
-        starting_points = [job['output']
-                           for job in jobs if job['cmd'] == 'load']
-        paths = []
-        for sp in starting_points:
-            paths += dfs(graph, [sp], [])
-
-        for mt in get_missing_tables():
-            delete_after(mt, paths)
-
-        jobs_to_do = find_jobs_to_do(jobs)
-        initial_jobs_to_do = list(jobs_to_do)
-        logger.info(f'To Create: {[j["output"] for j in jobs_to_do]}')
-
-        while jobs_to_do:
-            cnt = 0
-            for i, job in enumerate(jobs_to_do):
-                if is_doable(job):
-                    try:
-                        if job['cmd'] != 'apply':
-                            logger.info(
-                                f"processing {job['cmd']}: {job['output']}")
-                        _execute(c, job)
-
-                    except SkipThisTurn:
-                        continue
-
-                    except Exception as e:
-
-                        if isinstance(e, NoRowToInsert):
-                            # Many times you want it to be silenced
-                            # because you want to test it before actually
-                            # write the code
-                            logger.warning(
-                                f"No row to insert: {job['output']}")
-                        else:
-                            logger.error(f"Failed: {job['output']}")
-                            logger.error(f"{type(e).__name__}: {e}",
-                                         exc_info=True)
-
-                        try:
-                            c.drop(job['output'])
-                        except Exception:
-                            pass
-
-                        logger.warning(
-                            f"Unfinished: "
-                            f"{[job['output'] for job in jobs_to_do]}")
-                        return (initial_jobs_to_do, jobs_to_do)
-                    del jobs_to_do[i]
-                    cnt += 1
-            # No jobs can be done anymore
-            if cnt == 0:
-                for j in jobs_to_do:
-                    logger.warning(f'Unfinished: {j["output"]}')
-                    for t in j['inputs']:
-                        if t not in c.get_tables():
-                            logger.warning(f'Table not found: {t}')
-                return (initial_jobs_to_do, jobs_to_do)
-        # All jobs done well
-        if _CONFIG['export']:
-            c.export(listify(_CONFIG['export']))
-
-        return (initial_jobs_to_do, jobs_to_do)
+def _drop(c, tables):
+    tables = listify(tables)
+    for table in tables:
+        if _is_reserved(table):
+            raise ReservedKeyword(table)
+        c.cursor().execute(f'drop table if exists {table}')
 
 
 def _random_string(nchars):
@@ -882,9 +727,59 @@ def _insert_statement(name, d):
     return "insert into %s values (%s)" % (name, keycols)
 
 
+def _read(c, filename, name, delimiter=None, quotechar='"',
+        encoding='utf-8', newline="\n", fn=None):
+    total = None
+    if isinstance(filename, str):
+        _, ext = os.path.splitext(filename)
+        if ext.lower() == '.xlsx' or ext.lower() == ".xls":
+            seq = _read_excel(filename)
+        elif ext.lower() == '.sas7bdat':
+            seq = _read_sas(filename)
+        elif ext.lower() == ".dta":
+            seq = _read_stata(filename)
+        else:
+            # default delimiter is ","
+            delimiter = delimiter or\
+                ("\t" if ext.lower() == ".tsv" else ",")
+            seq = _read_csv(filename, delimiter=delimiter,
+                            quotechar=quotechar, encoding=encoding,
+                            newline=newline)
+            total = _line_count(filename, encoding, newline)
+    else:
+        # iterator, since you can pass an iterator
+        # functions of 'read' should be limited
+        seq = filename
+
+    seq = tqdm(seq, total=total)
+
+    if fn:
+        seq = _flatten(fn(rs) for rs in seq)
+    _insert(c, seq, name)
+
+
+def _insert(c, rs, name):
+    r0, rs = spy(rs)
+    if r0 == []:
+        raise NoRowToInsert(name)
+
+    cols = list(r0[0])
+    for x in [name] + cols:
+        if _is_reserved(x):
+            raise ReservedKeyword(x)
+
+    try:
+        c.cursor().execute(_create_statement(name, cols))
+        istmt = _insert_statement(name, r0[0])
+        c.cursor().executemany(istmt, rs)
+
+    except sqlite3.OperationalError:
+        raise InvalidColumns(cols)
+
+
 def _read_csv(filename, delimiter=',', quotechar='"',
               encoding='utf-8', newline="\n"):
-    with open(os.path.join(_WS[0], filename),
+    with open(os.path.join(os.getcwd(), filename),
               encoding=encoding, newline=newline) as f:
         header = [c.strip() for c in f.readline().split(delimiter)]
         yield from csv.DictReader(f, fieldnames=header,
@@ -892,7 +787,7 @@ def _read_csv(filename, delimiter=',', quotechar='"',
 
 
 def _read_sas(filename):
-    filename = os.path.join(_WS[0], filename)
+    filename = os.path.join(os.getcwd(), filename)
     with SAS7BDAT(filename) as f:
         reader = f.readlines()
         header = [c.strip() for c in next(reader)]
@@ -909,7 +804,7 @@ def _read_df(df):
 
 # this could be more complex but should it be?
 def _read_excel(filename):
-    filename = os.path.join(_WS[0], filename)
+    filename = os.path.join(os.getcwd(), filename)
     # it's OK. Excel files are small
     df = pd.read_excel(filename, keep_default_na=False)
     yield from _read_df(df)
@@ -917,7 +812,7 @@ def _read_excel(filename):
 
 # raises a deprecation warning
 def _read_stata(filename):
-    filename = os.path.join(_WS[0], filename)
+    filename = os.path.join(os.getcwd(), filename)
     chunk = 10_000
     for xs in pd.read_stata(filename, chunksize=chunk):
         yield from _read_df(xs)
