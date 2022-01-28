@@ -2,25 +2,7 @@ import os
 import sys
 
 
-_locale = 'English_United States.1252' if os.name == 'nt' else 'en_US.UTF-8'
-
-_CONFIG = {
-    'locale': _locale,
-    'msg': True,
-    'refresh': None,
-    'export': None,
-    'create_function': None,
-    'create_aggregate': None,
-    'create_collation': None,
-}
-
-_WS = [os.getcwd()]
-_SCRIPTNAME, _ = os.path.splitext(os.path.basename(sys.argv[0]))
-_DBNAME = _SCRIPTNAME + '.db'
-_GRAPH_NAME = _SCRIPTNAME + '.gv'
-_JOBS = {}
-# folder name (in workspace) for temporary databases for parallel work
-_CONN = [None]
+# Temporary folder for parallel works
 _TEMP = "_temp"
 
 # sqlite3 keywords

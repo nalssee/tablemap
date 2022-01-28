@@ -1,11 +1,10 @@
 import csv
-import locale
 import os
 import random
 import signal
 import sqlite3
 import string
-import sys
+import locale
 from contextlib import contextmanager
 from inspect import signature
 from itertools import groupby
@@ -24,8 +23,7 @@ from .config import _RESERVED_KEYWORDS, _TEMP
 
 from .exceptions import (GraphvizNotInstalled, InvalidColumns, InvalidGroup, NoRowToInsert,
                          NoRowToWrite, NoSuchTableFound, ReservedKeyword,
-                         SkipThisTurn, TableDuplication, UnknownCommand,
-                         UnknownConfig)
+                         SkipThisTurn, UnknownCommand,)
 from .logging import logger
 from .util import _build_keyfn, listify, step
 
@@ -67,20 +65,14 @@ def _delayed_keyboard_interrupts():
 
 
 class Conn:
-    def __init__(self,
-                 dbfile=None,
-                 loc='English_United States.1252'
-                 if os.name == 'nt' else 'en_US.UTF-8',
-                 # If you want to silence the messages, set it False
-                 msg=True):
+    def __init__(self, dbfile):
+        # figured this should be the default. Not 100% sure tho.
+        locale.setlocale(locale.LC_ALL, 
+            'English_United States.1252' if os.name == 'nt' else 'en_US.UTF-8')
 
-        dbfile = dbfile or os.path.basename(sys.argv[0]) + '.db'
-
+        # cwd is the workspace where all the files are 
         self.db = os.path.join(os.getcwd(), dbfile)
-        # instructions to create tables
         self.insts = {}
-        locale.setlocale(locale.LC_ALL, loc)
-        logger.propagate = msg
 
     def __setitem__(self, key, value):
         cmd = value[0]
@@ -100,7 +92,7 @@ class Conn:
             d = rest[0] if rest else {}
 
             d['cmd'] = 'read'
-            d['file'] = file
+            d['file'] = os.path.join(os.getcwd(), file)
             d.setdefault('fn', None)
             d.setdefault('delimiter', None)
             d.setdefault('quotechar', '"')
@@ -137,16 +129,11 @@ class Conn:
         else:
             raise UnknownCommand(cmd)
 
-    def ls(self):
-        with _connect(self.db) as c:
-            return _ls(c)
-
     def drop(self, tables):
         with _connect(self.db) as c:
             _drop(c, tables)
 
-    def graph(self, file=None):
-        file = file or os.path.splitext(self.db)[0] + ".gv"
+    def viz(self, file):
         insts = _append_output(self.insts)
         graph = _build_graph(insts)
 
@@ -165,6 +152,7 @@ class Conn:
             raise GraphvizNotInstalled
 
     def get(self, tname, cols=None, df=False):
+        # cols: order by these columns
         def getit(c):
             if tname in _ls(c):
                 if cols:
@@ -188,6 +176,9 @@ class Conn:
                     raise e
 
     def export(self, tables):
+        # tables: str of table names 
+        # if you want it to be an excel file then 'table1.xlsx' 
+        # otherwise they will be all csvs
         with _connect(self.db) as c:
             for table in listify(tables):
                 table, ext = os.path.splitext(table)
@@ -216,6 +207,8 @@ class Conn:
                             writer.writerow(r)
 
     def run(self):
+        # todo: Do we need the option to make it quiet, not sure yet
+        logger.propagate = True
         insts = _append_output(self.insts)
         required_tables = _find_required_tables(insts)
 
@@ -467,6 +460,7 @@ def _applyfn(fn, seq):
 
 
 def _tqdm(seq, total, by):
+    # you need another fn to deal with groupings
     if by:
         with tqdm(seq, total=total) as pbar:
             for rs in seq:
@@ -524,8 +518,7 @@ def _line_count(fname, encoding, newline):
             if not b:
                 break
             yield b
-    fname1 = os.path.join(os.getcwd(), fname)
-    with open(fname1, encoding=encoding, newline=newline, errors='ignore') as f:
+    with open(fname, encoding=encoding, newline=newline, errors='ignore') as f:
         # subtract -1 for a header
         return (sum(bl.count("\n") for bl in blocks(f))) - 1
 
@@ -550,6 +543,7 @@ def _execute_parallel_apply(c, inst):
         return
 
     itable = inst['inputs'][0]
+    # temporary directory for all the by-products
     tdir = os.path.join(os.getcwd(), _TEMP)
     if not os.path.exists(tdir):
         os.makedirs(tdir)
@@ -623,7 +617,7 @@ def _execute_parallel_apply(c, inst):
             return result
 
         try:
-            dbfile0 = os.path.join(_TEMP, _random_string(10))
+            dbfile0 = os.path.join(tdir, _random_string(10))
             c.cursor().execute(f"attach database '{dbfile0}' as {tcon}")
             c.cursor().execute(f"""create table {tcon}.{ttable} as select * from {itable}
                                   order by {','.join(inst['by'])}
@@ -639,7 +633,7 @@ def _execute_parallel_apply(c, inst):
                 return
             breaks = new_breaks(breaks, group_breaks)
 
-            dbfiles = [dbfile0] + [os.path.join(_TEMP, _random_string(10))
+            dbfiles = [dbfile0] + [os.path.join(tdir, _random_string(10))
                                    for _ in range(len(breaks))]
             exe = Pool(len(dbfiles))
 
@@ -660,7 +654,7 @@ def _execute_parallel_apply(c, inst):
         try:
            # remove duplicates
             breaks = list(dict.fromkeys(breaks))
-            dbfiles = [os.path.join(_TEMP, _random_string(10))
+            dbfiles = [os.path.join(tdir, _random_string(10))
                        for _ in range(len(breaks) + 1)]
             exe = Pool(len(dbfiles))
             c.cursor().execute(f"attach database '{dbfiles[0]}' as {tcon}")
@@ -779,15 +773,13 @@ def _insert(c, rs, name):
 
 def _read_csv(filename, delimiter=',', quotechar='"',
               encoding='utf-8', newline="\n"):
-    with open(os.path.join(os.getcwd(), filename),
-              encoding=encoding, newline=newline) as f:
+    with open(filename, encoding=encoding, newline=newline) as f:
         header = [c.strip() for c in f.readline().split(delimiter)]
         yield from csv.DictReader(f, fieldnames=header,
                                   delimiter=delimiter, quotechar=quotechar)
 
 
 def _read_sas(filename):
-    filename = os.path.join(os.getcwd(), filename)
     with SAS7BDAT(filename) as f:
         reader = f.readlines()
         header = [c.strip() for c in next(reader)]
@@ -804,7 +796,6 @@ def _read_df(df):
 
 # this could be more complex but should it be?
 def _read_excel(filename):
-    filename = os.path.join(os.getcwd(), filename)
     # it's OK. Excel files are small
     df = pd.read_excel(filename, keep_default_na=False)
     yield from _read_df(df)
@@ -812,7 +803,6 @@ def _read_excel(filename):
 
 # raises a deprecation warning
 def _read_stata(filename):
-    filename = os.path.join(os.getcwd(), filename)
     chunk = 10_000
     for xs in pd.read_stata(filename, chunksize=chunk):
         yield from _read_df(xs)
