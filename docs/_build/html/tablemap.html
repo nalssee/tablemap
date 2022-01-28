@@ -42,6 +42,12 @@
 <section id="module-tablemap.exceptions">
 <span id="tablemap-exceptions-module"></span><h2>tablemap.exceptions module<a class="headerlink" href="#module-tablemap.exceptions" title="Permalink to this headline">¶</a></h2>
 <dl class="py exception">
+<dt class="sig sig-object py" id="tablemap.exceptions.GraphvizNotInstalled">
+<em class="property"><span class="pre">exception</span> </em><span class="sig-prename descclassname"><span class="pre">tablemap.exceptions.</span></span><span class="sig-name descname"><span class="pre">GraphvizNotInstalled</span></span><a class="headerlink" href="#tablemap.exceptions.GraphvizNotInstalled" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#tablemap.exceptions.TablemapError" title="tablemap.exceptions.TablemapError"><code class="xref py py-class docutils literal notranslate"><span class="pre">tablemap.exceptions.TablemapError</span></code></a></p>
+</dd></dl>
+
+<dl class="py exception">
 <dt class="sig sig-object py" id="tablemap.exceptions.InvalidColumns">
 <em class="property"><span class="pre">exception</span> </em><span class="sig-prename descclassname"><span class="pre">tablemap.exceptions.</span></span><span class="sig-name descname"><span class="pre">InvalidColumns</span></span><a class="headerlink" href="#tablemap.exceptions.InvalidColumns" title="Permalink to this definition">¶</a></dt>
 <dd><p>Bases: <a class="reference internal" href="#tablemap.exceptions.TablemapError" title="tablemap.exceptions.TablemapError"><code class="xref py py-class docutils literal notranslate"><span class="pre">tablemap.exceptions.TablemapError</span></code></a></p>
@@ -98,6 +104,12 @@
 </dd></dl>
 
 <dl class="py exception">
+<dt class="sig sig-object py" id="tablemap.exceptions.UnknownCommand">
+<em class="property"><span class="pre">exception</span> </em><span class="sig-prename descclassname"><span class="pre">tablemap.exceptions.</span></span><span class="sig-name descname"><span class="pre">UnknownCommand</span></span><a class="headerlink" href="#tablemap.exceptions.UnknownCommand" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#tablemap.exceptions.TablemapError" title="tablemap.exceptions.TablemapError"><code class="xref py py-class docutils literal notranslate"><span class="pre">tablemap.exceptions.TablemapError</span></code></a></p>
+</dd></dl>
+
+<dl class="py exception">
 <dt class="sig sig-object py" id="tablemap.exceptions.UnknownConfig">
 <em class="property"><span class="pre">exception</span> </em><span class="sig-prename descclassname"><span class="pre">tablemap.exceptions.</span></span><span class="sig-name descname"><span class="pre">UnknownConfig</span></span><a class="headerlink" href="#tablemap.exceptions.UnknownConfig" title="Permalink to this definition">¶</a></dt>
 <dd><p>Bases: <a class="reference internal" href="#tablemap.exceptions.TablemapError" title="tablemap.exceptions.TablemapError"><code class="xref py py-class docutils literal notranslate"><span class="pre">tablemap.exceptions.TablemapError</span></code></a></p>
@@ -109,101 +121,36 @@
 </section>
 <section id="module-tablemap.tablemap">
 <span id="tablemap-tablemap-module"></span><h2>tablemap.tablemap module<a class="headerlink" href="#module-tablemap.tablemap" title="Permalink to this headline">¶</a></h2>
-<p>main file.</p>
-<dl class="py function">
-<dt class="sig sig-object py" id="tablemap.tablemap.apply">
-<span class="sig-prename descclassname"><span class="pre">tablemap.tablemap.</span></span><span class="sig-name descname"><span class="pre">apply</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">fn</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">data</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">by</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">parallel</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.apply" title="Permalink to this definition">¶</a></dt>
-<dd><p>Forms apply instruction.</p>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="tablemap.tablemap.concat">
-<span class="sig-prename descclassname"><span class="pre">tablemap.tablemap.</span></span><span class="sig-name descname"><span class="pre">concat</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">inputs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.concat" title="Permalink to this definition">¶</a></dt>
-<dd><p>Forms concat instruction.</p>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="tablemap.tablemap.get">
-<span class="sig-prename descclassname"><span class="pre">tablemap.tablemap.</span></span><span class="sig-name descname"><span class="pre">get</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tname</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cols</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">df</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.get" title="Permalink to this definition">¶</a></dt>
-<dd><p>Get a list of rows (the whole table) ordered by cols.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters</dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>tname</strong> – table name</p></li>
-<li><p><strong>cols</strong> – comma separated string</p></li>
-</ul>
-</dd>
-<dt class="field-even">Returns</dt>
-<dd class="field-even"><p>a list of rows</p>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="tablemap.tablemap.join">
-<span class="sig-prename descclassname"><span class="pre">tablemap.tablemap.</span></span><span class="sig-name descname"><span class="pre">join</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.join" title="Permalink to this definition">¶</a></dt>
-<dd><p>Forms join instruction.</p>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="tablemap.tablemap.load">
-<span class="sig-prename descclassname"><span class="pre">tablemap.tablemap.</span></span><span class="sig-name descname"><span class="pre">load</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">file</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fn</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">delimiter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">quotechar</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'&quot;'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">encoding</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'utf-8'</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.load" title="Permalink to this definition">¶</a></dt>
-<dd><p>Forms load instruction.</p>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="tablemap.tablemap.mzip">
-<span class="sig-prename descclassname"><span class="pre">tablemap.tablemap.</span></span><span class="sig-name descname"><span class="pre">mzip</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">fn</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">data</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stop_short</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.mzip" title="Permalink to this definition">¶</a></dt>
-<dd><p>Forms mzip instruction.</p>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="tablemap.tablemap.register">
-<span class="sig-prename descclassname"><span class="pre">tablemap.tablemap.</span></span><span class="sig-name descname"><span class="pre">register</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.register" title="Permalink to this definition">¶</a></dt>
-<dd><p>Register processes as keyword args.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">tablemap</span> <span class="k">as</span> <span class="nn">tm</span> 
-
-<span class="n">tm</span><span class="o">.</span><span class="n">register</span><span class="p">(</span>
-    <span class="n">table_name</span> <span class="o">=</span> <span class="n">tm</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s1">&#39;sample.csv&#39;</span><span class="p">),</span>
-    <span class="n">table_name1</span> <span class="o">=</span> <span class="n">tm</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">simple_process</span><span class="p">,</span> <span class="s1">&#39;table_name&#39;</span><span class="p">),</span>
-<span class="p">)</span>
-
-<span class="n">tm</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
-</pre></div>
-</div>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="tablemap.tablemap.run">
-<span class="sig-prename descclassname"><span class="pre">tablemap.tablemap.</span></span><span class="sig-name descname"><span class="pre">run</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.run" title="Permalink to this definition">¶</a></dt>
-<dd><p>Run registered processes, only those that are not in the database and        also that depend on those missing processes.</p>
-<dl class="field-list simple">
-<dt class="field-odd">Parameters</dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>ws</strong> (<em>path as str</em>) – working space, the default is where the script is.</p></li>
-<li><p><strong>locale</strong> – The default is en_US.UTF-8
-(English_United States.1252 for Windows)</p></li>
-<li><p><strong>msg</strong> – You may not want visual noises in the terminal.</p></li>
-<li><p><strong>refresh</strong> (<em>comma separated string of table names</em>) – <p>You may want to rerun the script over and over again,
-changing the code a bit. It could be tedious to delete the table
-everytime in those circumstances.</p>
-<p>Pass table names in string, for example ‘table1, table2’.</p>
-</p></li>
-<li><p><strong>export</strong> (<em>comma separated string of table names</em>) – Export tables in csv. for example ‘table1, table2’
-Those CSVs will be in the workspace as table1.csv, table2.csv.</p></li>
-</ul>
-</dd>
-<dt class="field-even">Returns</dt>
-<dd class="field-even"><p>Actually returns something for testing purposes,
-but not relavant.</p>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py function">
-<dt class="sig sig-object py" id="tablemap.tablemap.select">
-<span class="sig-prename descclassname"><span class="pre">tablemap.tablemap.</span></span><span class="sig-name descname"><span class="pre">select</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cols</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">data</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">where</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">group_by</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">having</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">order_by</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.select" title="Permalink to this definition">¶</a></dt>
+<dl class="py class">
+<dt class="sig sig-object py" id="tablemap.tablemap.Conn">
+<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">tablemap.tablemap.</span></span><span class="sig-name descname"><span class="pre">Conn</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dbfile</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.Conn" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="tablemap.tablemap.Conn.drop">
+<span class="sig-name descname"><span class="pre">drop</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tables</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.Conn.drop" title="Permalink to this definition">¶</a></dt>
 <dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="tablemap.tablemap.Conn.export">
+<span class="sig-name descname"><span class="pre">export</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tables</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.Conn.export" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="tablemap.tablemap.Conn.get">
+<span class="sig-name descname"><span class="pre">get</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tname</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cols</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">df</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.Conn.get" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="tablemap.tablemap.Conn.run">
+<span class="sig-name descname"><span class="pre">run</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.Conn.run" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="tablemap.tablemap.Conn.viz">
+<span class="sig-name descname"><span class="pre">viz</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">file</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.tablemap.Conn.viz" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
 
 </section>
 <section id="module-tablemap.util">
@@ -278,6 +225,11 @@ but not relavant.</p>
 </dd>
 </dl>
 </dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="tablemap.util.form">
+<span class="sig-prename descclassname"><span class="pre">tablemap.util.</span></span><span class="sig-name descname"><span class="pre">form</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#tablemap.util.form" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
 
 <dl class="py function">
 <dt class="sig sig-object py" id="tablemap.util.getX">
@@ -422,7 +374,7 @@ if fn is not given, simply filter with pred</p>
   <h3 id="searchlabel">Quick search</h3>
     <div class="searchformwrapper">
     <form class="search" action="search.html" method="get">
-      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
       <input type="submit" value="Go" />
     </form>
     </div>
@@ -444,7 +396,7 @@ if fn is not given, simply filter with pred</p>
       &copy;2021, nalssee.
       
       |
-      Powered by <a href="http://sphinx-doc.org/">Sphinx 4.0.1</a>
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 4.2.0</a>
       &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
       
       |
