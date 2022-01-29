@@ -1,10 +1,10 @@
 import csv
+import locale
 import os
 import random
 import signal
 import sqlite3
 import string
-import locale
 from contextlib import contextmanager
 from inspect import signature
 from itertools import groupby
@@ -20,10 +20,9 @@ from sas7bdat import SAS7BDAT
 from tqdm import tqdm
 
 from .config import _RESERVED_KEYWORDS, _TEMP
-
-from .exceptions import (GraphvizNotInstalled, InvalidColumns, InvalidGroup, NoRowToInsert,
-                         NoRowToWrite, NoSuchTableFound, ReservedKeyword,
-                         SkipThisTurn, UnknownCommand,)
+from .exceptions import (GraphvizNotInstalled, InvalidColumns, InvalidGroup,
+                         NoRowToInsert, NoRowToWrite, NoSuchTableFound,
+                         ReservedKeyword, SkipThisTurn, UnknownCommand)
 from .logging import logger
 from .util import _build_keyfn, listify, step
 
@@ -65,8 +64,13 @@ def _delayed_keyboard_interrupts():
 
 
 class Conn:
+    """ Connection to a database
+
+    :param dbfile: str (database file name) 
+        Creates a new file if it doesn't exist.
+        Currrent working directory is the default path.
+    """
     def __init__(self, dbfile):
-        # figured this should be the default. Not 100% sure tho.
         locale.setlocale(locale.LC_ALL, 
             'English_United States.1252' if os.name == 'nt' else 'en_US.UTF-8')
 
