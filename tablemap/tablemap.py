@@ -96,7 +96,11 @@ class Conn:
             d = rest[0] if rest else {}
 
             d['cmd'] = 'read'
-            d['file'] = os.path.join(os.getcwd(), file)
+            if isinstance(file, str):
+                d['file'] = os.path.join(os.getcwd(), file)
+            else:
+                # otherwise file is an iterator
+                d['file'] = file
             d.setdefault('fn', None)
             d.setdefault('delimiter', None)
             d.setdefault('quotechar', '"')

@@ -53,6 +53,25 @@ def test_loading_ordinary_csv():
         assert list(a.values()) == b
 
 
+def test_loading_iterator():
+    conn = tm.Conn('sample.db')
+
+    def gen_orders():
+        seq = tm.util.readxl("tests/Orders.csv")
+        header = next(seq)
+        for line in seq:
+            row = dict(zip(header, line))
+            yield row
+
+    conn['orders'] = f('read', gen_orders()) 
+    conn['orders1'] = f('read', "tests/Orders.csv")
+
+    conn.run()
+    for a, b in zip(conn.get('orders'), conn.get('orders1')):
+        assert a == b
+ 
+
+
 def test_apply_order_year():
     def year(r):
         r['order_year'] = r['order_date'][:4]
