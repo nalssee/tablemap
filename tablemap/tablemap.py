@@ -159,29 +159,23 @@ class Conn:
         except:
             raise GraphvizNotInstalled
 
-    def get(self, tname, cols=None, df=False):
+    def get(self, tname, cols=None):
         # cols: order by these columns
-        def getit(c):
+        with _connect(self.db) as c:
+            tname = tname.strip()
             if tname in _ls(c):
                 if cols:
                     sql = f"""select * from {tname}
                             order by {','.join(listify(cols))}"""
                 else:
                     sql = f"select * from {tname}"
-                return pd.read_sql(sql, c) if df else list(_fetch(c, sql))
-            else:
-                raise NoSuchTableFound(tname)
+                yield from _fetch(c, sql) 
 
-        with _connect(self.db) as c:
-            tname = tname.strip()
-            try:
-                return getit(c)
-            except NoSuchTableFound as e:
-                # when it's possible to execute once the other insts are done
-                if tname in self.insts:
-                    raise SkipThisTurn
-                else:
-                    raise e
+            # It's possible to execute once the other insts are done
+            elif tname in self.insts:
+                raise SkipThisTurn
+            else:
+                raise NoSuchTableFound(tname) 
 
     def export(self, tables):
         # tables: str of table names 

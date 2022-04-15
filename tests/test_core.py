@@ -3,6 +3,7 @@ import os
 import pytest
 import tablemap as tm
 import sys
+import pandas as pd
 
 # pytest should be run in the root directory
 
@@ -44,7 +45,7 @@ def test_loading_ordinary_csv():
     conn = tm.Conn('sample.db')
     conn['orders'] = f('read', 'tests/Orders.csv')
     conn.run()
-    orders1 = conn.get('orders')
+    orders1 = list(conn.get('orders'))
     orders2 = tm.util.readxl('tests/Orders.csv')
     header = next(orders2)
     assert list(orders1[0].keys()) == header
@@ -98,8 +99,8 @@ def test_apply_group1():
     conn['order_items2'] = f('apply', size, 'order_items', by='prod_id, order_item')
 
     conn.run()
-    assert len(conn.get('order_items1')) == 7
-    assert len(conn.get('order_items2')) == 16
+    assert len(list(conn.get('order_items1'))) == 7
+    assert len(list(conn.get('order_items2'))) == 16
 
 
 def test_join():
@@ -112,7 +113,7 @@ def test_join():
     )
 
     conn.run()
-    products1 = conn.get('products1')
+    products1 = list(conn.get('products1'))
     assert products1[0]['vend_country'] == 'USA'
     assert products1[-1]['vend_country'] == 'England'
 
@@ -128,7 +129,7 @@ def test_parallel1():
 
     conn.run()
 
-    assert conn.get('items1') == conn.get('items2')
+    assert list(conn.get('items1')) == list(conn.get('items2'))
 
 
 def test_parallel2():
@@ -143,8 +144,7 @@ def test_parallel2():
     conn['items2'] = f('apply', size, 'items', by='prod_id', parallel=True)
 
     conn.run()
-
-    assert conn.get('items1') == conn.get('items2')
+    assert list(conn.get('items1')) == list(conn.get('items2'))
 
 
 def test_full_join_using_mzip():
@@ -171,6 +171,6 @@ def test_full_join_using_mzip():
          ('prods', 'prod_id')])
     conn.run()
 
-    items1 = conn.get('items1', df=True) 
+    items1 = pd.DataFrame(conn.get('items1'))
     assert len(items1) == 20 
 
