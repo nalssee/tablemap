@@ -7,8 +7,6 @@ import pandas as pd
 
 # pytest should be run in the root directory
 
-f = tm.form
-
 @pytest.fixture(autouse=True)
 def run_around_tests():
     files = ['sample.db',
@@ -30,7 +28,6 @@ def run_around_tests():
     remfiles()
 
 
-
 def test_dbfile():
     conn = tm.Conn('sample.db')
     # workspace is set to be the 'current working directory'
@@ -38,12 +35,13 @@ def test_dbfile():
 
     conn1 = tm.Conn('foo/sample.db')
     assert conn1.db == os.path.join(os.getcwd(), 'foo/sample.db')
-
     # you can of course change directory using os.chdir
+
 
 def test_loading_ordinary_csv():
     conn = tm.Conn('sample.db')
-    conn['orders'] = f('read', 'tests/Orders.csv')
+    # conn['orders'] = f('read', 'tests/Orders.csv')
+    conn['orders'] = tm.read('tests/Orders.csv')
     conn.run()
     orders1 = list(conn.get('orders'))
     orders2 = tm.util.readxl('tests/Orders.csv')
@@ -64,14 +62,13 @@ def test_loading_iterator():
             row = dict(zip(header, line))
             yield row
 
-    conn['orders'] = f('read', gen_orders()) 
-    conn['orders1'] = f('read', "tests/Orders.csv")
+    conn['orders'] = tm.read(gen_orders()) 
+    conn['orders1'] = tm.read("tests/Orders.csv")
 
     conn.run()
     for a, b in zip(conn.get('orders'), conn.get('orders1')):
         assert a == b
  
-
 
 def test_apply_order_year():
     def year(r):
@@ -79,8 +76,8 @@ def test_apply_order_year():
         return r
 
     conn = tm.Conn('sample.db')
-    conn['orders'] = f('read', 'tests/Orders.csv')
-    conn['orders1'] = f('apply', year, 'orders')
+    conn['orders'] = tm.read('tests/Orders.csv')
+    conn['orders1'] = tm.map(year, 'orders')
     conn.run()
 
     for r in conn.get('orders1'):
@@ -94,9 +91,9 @@ def test_apply_group1():
         return r0
 
     conn = tm.Conn('sample.db')
-    conn['order_items'] = f('read', 'tests/OrderItems.csv')
-    conn['order_items1'] = f('apply', size, 'order_items', by='prod_id')
-    conn['order_items2'] = f('apply', size, 'order_items', by='prod_id, order_item')
+    conn['order_items'] = tm.read('tests/OrderItems.csv')
+    conn['order_items1'] = tm.map(size, 'order_items', by='prod_id')
+    conn['order_items2'] = tm.map(size, 'order_items', by='prod_id, order_item')
 
     conn.run()
     assert len(list(conn.get('order_items1'))) == 7
@@ -105,9 +102,9 @@ def test_apply_group1():
 
 def test_join():
     conn = tm.Conn('sample.db')
-    conn['products'] = f('read', 'tests/Products.csv')
-    conn['vendors'] = f('read', 'tests/Vendors.csv')
-    conn['products1'] = f('join', 
+    conn['products'] = tm.read('tests/Products.csv')
+    conn['vendors'] = tm.read('tests/Vendors.csv')
+    conn['products1'] = tm.join( 
         ['products', '*', 'vend_id'],
         ['vendors', 'vend_name, vend_country', 'vend_id']
     )
@@ -123,9 +120,9 @@ def test_parallel1():
         return r
 
     conn = tm.Conn('sample.db')
-    conn['items'] = f('read', 'tests/OrderItems.csv')
-    conn['items1'] = f('apply', revenue, 'items')
-    conn['items2'] = f('apply', revenue, 'items', parallel=True)
+    conn['items'] = tm.read('tests/OrderItems.csv')
+    conn['items1'] = tm.map(revenue, 'items')
+    conn['items2'] = tm.map(revenue, 'items', parallel=True)
 
     conn.run()
 
@@ -139,9 +136,9 @@ def test_parallel2():
         return r0
 
     conn = tm.Conn('sample.db')
-    conn['items'] = f('read', 'tests/OrderItems.csv')
-    conn['items1'] = f('apply', size, 'items', by='prod_id')
-    conn['items2'] = f('apply', size, 'items', by='prod_id', parallel=True)
+    conn['items'] = tm.read('tests/OrderItems.csv')
+    conn['items1'] = tm.map(size, 'items', by='prod_id')
+    conn['items2'] = tm.map(size, 'items', by='prod_id', parallel=True)
 
     conn.run()
     assert list(conn.get('items1')) == list(conn.get('items2'))
@@ -164,13 +161,12 @@ def test_full_join_using_mzip():
                 }
 
     conn = tm.Conn('sample.db')
-    conn['items'] = f('read', 'tests/OrderItems.csv')
-    conn['prods'] = f('read', 'tests/Products.csv')
-    conn['items1'] = f('mzip', combine, 
+    conn['items'] = tm.read('tests/OrderItems.csv')
+    conn['prods'] = tm.read('tests/Products.csv')
+    conn['items1'] = tm.mzip(combine, 
         [('items', 'prod_id'),
          ('prods', 'prod_id')])
     conn.run()
 
     items1 = pd.DataFrame(conn.get('items1'))
     assert len(items1) == 20 
-

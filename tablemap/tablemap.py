@@ -6,6 +6,7 @@ import signal
 import sqlite3
 import string
 from contextlib import contextmanager
+from fnmatch import fnmatch
 from inspect import signature
 from itertools import groupby
 from shutil import copyfile
@@ -26,8 +27,60 @@ from .exceptions import (GraphvizNotInstalled, InvalidColumns, InvalidGroup,
 from .logging import logger
 from .util import _build_keyfn, listify, step
 
-# from pathos.multiprocessing import ProcessingPool as Pool
 
+def map(fn, table, by=None, parallel=False):
+    d = {}
+    d['cmd'] = 'map'
+    d['fn'] = fn
+    d['inputs'] = [table.strip()]
+    d['by'] = listify(by) if by else []
+    d['parallel'] = parallel
+    return d
+
+
+def read(file, fn=None, delimiter=None, quotechar='"',
+        encoding='utf-8'):
+    d = {}
+    if isinstance(file, str):
+        d['file'] = os.path.join(os.getcwd(), file)
+    else:
+        # otherwise file is an iterator
+        d['file'] = file
+    d['cmd'] = 'read'
+    d['fn'] = fn 
+    d['delimiter'] = delimiter
+    d['quotechar'] = quotechar 
+    d['encoding'] = encoding
+    d['inputs'] = []
+    return d
+
+
+def join(*args):
+    d = {}
+    d['cmd'] = 'join'
+    d['inputs'] = [arg[0].strip() for arg in args] 
+    d['args'] = args
+    return d
+
+
+def concat(tables):
+    return {
+        'cmd': 'concat',
+        'inputs': listify(tables),
+    }
+
+
+def mzip(fn, data, stop_short=False):
+    # matching zip for more complex joining procs
+    d = {}
+    d['cmd'] = 'mzip'
+    d['fn'] = fn
+    # data: [(table, columns_to_match), ...]
+    d['inputs'] = [table.strip() for table, _ in data] 
+    d['data'] = data
+    d['stop_short'] = stop_short
+    return d
+    
 
 @contextmanager
 def _connect(db):
@@ -79,63 +132,7 @@ class Conn:
         self.insts = {}
 
     def __setitem__(self, key, value):
-        cmd = value[0]
-        if cmd == "apply" or cmd == "map":
-            _, fn, table, *rest = value
-            d = rest[0] if rest else {}
-
-            d['cmd'] = 'apply'
-            d['fn'] = fn
-            d['inputs'] = [table]
-            d['by'] = listify(d['by']) if d.get('by') else []
-            d.setdefault('parallel', False)
-
-            self.insts[key] = d
-        elif cmd == 'read':
-            _, file, *rest = value
-            d = rest[0] if rest else {}
-
-            d['cmd'] = 'read'
-            if isinstance(file, str):
-                d['file'] = os.path.join(os.getcwd(), file)
-            else:
-                # otherwise file is an iterator
-                d['file'] = file
-            d.setdefault('fn', None)
-            d.setdefault('delimiter', None)
-            d.setdefault('quotechar', '"')
-            d.setdefault('encoding', 'utf-8')
-            d.setdefault('inputs', [])
-
-            self.insts[key] = d
-        elif cmd == 'join':
-            _, *args = value
-            d = {}
-            d['cmd'] = 'join'
-            d['inputs'] = [arg[0] for arg in args]
-            d['args'] = args
-
-            self.insts[key] = d
-        # matching zip for more complex joining procs
-        elif cmd == 'concat':
-            _, tables = value
-            d = {}
-            d['cmd'] = 'concat'
-            d['intputs'] = listify(tables)
-            self.insts[key] = d
-
-        elif cmd == 'mzip':
-            _, fn, data, *rest = value
-            d = rest[0] if rest else {}
-            d['cmd'] = 'mzip'
-            d['fn'] = fn
-            # data: [(table, columns_to_match), ...]
-            d['inputs'] = [table for table, _ in data]
-            d['data'] = data
-            d.setdefault('stop_short', False)
-            self.insts[key] = d
-        else:
-            raise UnknownCommand(cmd)
+        self.insts[key] = value
 
     def drop(self, tables):
         with _connect(self.db) as c:
@@ -307,7 +304,7 @@ class Conn:
 
 def _append_output(kwargs):
     for k, v in kwargs.items():
-        v['output'] = k
+        v['output'] = k.strip()
     return [v for _, v in kwargs.items()]
 
 
@@ -482,7 +479,7 @@ def _execute(c, inst):
               quotechar=inst['quotechar'], encoding=inst['encoding'],
               fn=inst['fn'])
 
-    elif cmd == 'apply':
+    elif cmd == 'map':
         if not inst['parallel']:
             _execute_serial_apply(c, inst)
         else:
